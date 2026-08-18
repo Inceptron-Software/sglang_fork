@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from sglang.srt.model_executor.cuda_graph_config import Backend
+from sglang.srt.model_executor.cuda_graph_config import Backend, Phase
 from sglang.srt.model_executor.runner_backend.base_cuda_graph_backend import (
     BaseCudaGraphBackend,
 )
@@ -40,6 +40,7 @@ from sglang.srt.model_executor.runner_backend.tc_piecewise_cuda_graph_backend im
 from sglang.srt.runtime_context import (
     get_exec,
 )
+from sglang.srt.platforms import current_platform
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
@@ -84,6 +85,12 @@ def resolve_decode_backend(
         )
 
         return FullXPUGraphBackend(cuda_graph_runner)
+
+    platform_backend_cls = current_platform.get_cuda_graph_backend_cls(
+        Phase.DECODE, backend_name
+    )
+    if platform_backend_cls is not None:
+        return platform_backend_cls(cuda_graph_runner)
 
     if backend_name == Backend.BREAKABLE:
         return BreakableCudaGraphBackend(

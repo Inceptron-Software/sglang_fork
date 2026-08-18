@@ -85,6 +85,10 @@ class TestPlatformEnum(CustomTestCase):
         actual = {member.name for member in PlatformEnum}
         self.assertEqual(actual, expected)
 
+    def test_cuda_graph_backend_hook_defaults_to_none(self):
+        platform = SRTPlatform()
+        self.assertIsNone(platform.get_cuda_graph_backend_cls("decode", "full"))
+
 
 class TestCpuArchEnum(CustomTestCase):
     """Tests for CpuArchEnum enumeration."""

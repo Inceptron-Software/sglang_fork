@@ -175,7 +175,10 @@ class RadixAttention(nn.Module):
 
         context = get_tc_piecewise_forward_context()
         if (
-            forward_batch.forward_mode.is_extend()
+            (
+                forward_batch.forward_mode.is_extend()
+                or forward_batch.forward_mode.is_decode()
+            )
             and context is not None
             # ``_force_eager_attn`` is only set inside Inkling's eager
             # norm+attn+sconv region, never during tc-piecewise capture. Reading
