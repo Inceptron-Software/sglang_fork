@@ -60,6 +60,14 @@ class SRTPlatform(DeviceMixin):
         """Return the graph runner class for this platform."""
         raise NotImplementedError
 
+    def get_cuda_graph_backend_cls(self, phase: str, backend: str) -> Optional[type]:
+        """Return a platform-specific CUDA graph backend class, if any.
+
+        Out-of-tree platforms can override a phase/backend combination while
+        preserving SGLang's built-in backend resolution for every other case.
+        """
+        return None
+
     def get_mha_kv_pool_cls(self) -> type:
         """Return the MHA KV pool class for this platform."""
         raise NotImplementedError

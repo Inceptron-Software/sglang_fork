@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, List, Optional
 
-from sglang.srt.model_executor.cuda_graph_config import Backend
+from sglang.srt.model_executor.cuda_graph_config import Backend, Phase
 from sglang.srt.model_executor.runner_backend_utils import (
     PREFILL_CUDA_GRAPH_CAPTURE_FAILED_MSG,
 )
@@ -46,7 +46,7 @@ def is_in_tc_piecewise_cuda_graph() -> bool:
 
 
 @contextmanager
-def enable_tc_piecewise_cuda_graph():
+def enable_tc_piecewise_cuda_graph(*, phase: str = Phase.PREFILL):
     """Mark the enclosed scope as inside a tc_piecewise CUDA graph
     capture/replay. Any exception raised inside is logged with the
     PCG-specific failure hint, then re-raised for the caller to handle.
@@ -56,9 +56,15 @@ def enable_tc_piecewise_cuda_graph():
     try:
         yield
     except Exception as exc:
-        msg = PREFILL_CUDA_GRAPH_CAPTURE_FAILED_MSG.format(
-            backend=Backend.TC_PIECEWISE, suggestions=TCPCG_FAILURE_HINT
-        )
+        if phase == Phase.PREFILL:
+            msg = PREFILL_CUDA_GRAPH_CAPTURE_FAILED_MSG.format(
+                backend=Backend.TC_PIECEWISE, suggestions=TCPCG_FAILURE_HINT
+            )
+        else:
+            msg = (
+                "Piecewise decode compilation inside the full CUDA graph failed; "
+                "startup is aborted without an eager fallback."
+            )
         logger.error(f"{type(exc).__name__}: {exc}\n{msg}")
         raise
     finally:
