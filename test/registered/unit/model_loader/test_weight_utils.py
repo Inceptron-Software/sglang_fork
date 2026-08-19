@@ -7,8 +7,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from sglang.srt.model_loader import weight_utils
 from sglang.srt.model_loader.weight_utils import (
     filter_duplicate_safetensors_files,
+    get_quant_config,
     maybe_add_mtp_safetensors,
 )
 from sglang.srt.utils import runai_utils
@@ -197,6 +202,43 @@ class TestMaybeAddMtpSafetensors(CustomTestCase):
                     [model, mtp],
                 )
                 listing.assert_not_called()
+
+class TestQuantizationConfigHook(CustomTestCase):
+    def test_file_based_modelopt_fp8_uses_platform_quantization_class(self):
+        class PlatformModelOptFp8Config:
+            @staticmethod
+            def get_config_filenames():
+                return ["hf_quant_config.json"]
+
+            @classmethod
+            def from_config(cls, config):
+                return cls()
+
+        with tempfile.TemporaryDirectory() as model_path:
+            with open(os.path.join(model_path, "hf_quant_config.json"), "w") as f:
+                json.dump(
+                    {
+                        "producer": {"name": "modelopt"},
+                        "quantization": {"quant_algo": "FP8"},
+                    },
+                    f,
+                )
+            model_config = SimpleNamespace(
+                quantization="modelopt_fp8",
+                hf_config=SimpleNamespace(quantization_config=None, text_config=None),
+                model_path=model_path,
+                revision=None,
+            )
+            load_config = SimpleNamespace(model_loader_extra_config=None)
+
+            with patch.object(
+                weight_utils,
+                "get_quantization_config",
+                return_value=PlatformModelOptFp8Config,
+            ):
+                config = get_quant_config(model_config, load_config, {})
+
+        self.assertIsInstance(config, PlatformModelOptFp8Config)
 
 
 if __name__ == "__main__":

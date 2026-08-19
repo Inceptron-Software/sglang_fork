@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 def make_compiler(config: CompilationConfig):
+    platform_compiler = current_platform.get_piecewise_compiler(config)
+    if platform_compiler is not None:
+        return platform_compiler
     if config.compiler == "eager":
         return EagerAdapter()
     elif config.compiler == "inductor":

@@ -105,6 +105,8 @@ from sglang.srt.layers.moe import (
     is_moe_input_scattered_across_dp_ranks,
 )
 from sglang.srt.layers.moe.utils import has_per_rank_fused_shared_slots
+from sglang.srt.layers.utils import MultiPlatformOp
+from sglang.srt.platforms import current_platform
 from sglang.srt.state_capturer.routed_experts import get_global_experts_capturer
 from sglang.srt.utils import (
     cpu_has_amx_support,
@@ -1531,6 +1533,13 @@ def biased_grouped_topk_impl(
     return topk_weights, topk_ids
 
 
+def _biased_grouped_topk_fallback(*args, **kwargs):
+    platform_impl = current_platform.get_biased_grouped_topk_impl()
+    if platform_impl is not None:
+        return platform_impl(*args, **kwargs)
+    return biased_grouped_topk_impl(*args, **kwargs)
+
+
 from sglang.kernels.ops.moe.fill_padded_rows import (
     _can_fuse_padded_region,
     _fill_padded_rows,
@@ -1973,7 +1982,7 @@ def biased_grouped_topk_gpu(
             )
 
         else:
-            return biased_grouped_topk_impl(
+            return _biased_grouped_topk_fallback(
                 hidden_states,
                 gating_output,
                 correction_bias,
