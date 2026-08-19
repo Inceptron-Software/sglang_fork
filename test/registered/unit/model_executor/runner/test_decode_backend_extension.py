@@ -21,6 +21,7 @@ def _backend_runner():
     server_args = SimpleNamespace(
         cuda_graph_config=SimpleNamespace(
             decode=SimpleNamespace(backend=Backend.FULL),
+            prefill=SimpleNamespace(backend=Backend.TC_PIECEWISE),
         ),
         enable_memory_saver=False,
         debug_cuda_graph=False,
@@ -66,6 +67,25 @@ class TestDecodeBackendExtension(CustomTestCase):
         self.assertIsInstance(backend, BuiltinBackend)
         self.assertIs(backend.runner, runner)
         self.assertFalse(backend.enable_memory_saver)
+
+    def test_out_of_tree_prefill_backend_precedes_builtin_resolution(self):
+        class PlatformBackend:
+            def __init__(self, runner):
+                self.runner = runner
+
+        runner = _backend_runner()
+        platform = SimpleNamespace(
+            get_cuda_graph_backend_cls=Mock(return_value=PlatformBackend)
+        )
+
+        with patch.object(utils, "current_platform", platform):
+            backend = utils.resolve_prefill_backend(runner)
+
+        self.assertIsInstance(backend, PlatformBackend)
+        self.assertIs(backend.runner, runner)
+        platform.get_cuda_graph_backend_cls.assert_called_once_with(
+            Phase.PREFILL, Backend.TC_PIECEWISE
+        )
 
     def test_capture_hands_forward_batch_to_backend(self):
         runner = DecodeCudaGraphRunner.__new__(DecodeCudaGraphRunner)

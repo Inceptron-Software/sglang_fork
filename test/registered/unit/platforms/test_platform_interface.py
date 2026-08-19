@@ -88,6 +88,11 @@ class TestPlatformEnum(CustomTestCase):
         platform = SRTPlatform()
         self.assertIsNone(platform.get_cuda_graph_backend_cls("decode", "full"))
 
+    def test_compilation_and_routing_hooks_default_to_none(self):
+        platform = SRTPlatform()
+        self.assertIsNone(platform.get_piecewise_compiler(object()))
+        self.assertIsNone(platform.get_biased_grouped_topk_impl())
+
 
 class TestCpuArchEnum(CustomTestCase):
     """Tests for CpuArchEnum enumeration."""

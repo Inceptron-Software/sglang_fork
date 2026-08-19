@@ -116,6 +116,12 @@ def resolve_prefill_backend(
     cfg = model_runner.server_args.cuda_graph_config
     backend_name = cfg.prefill.backend if cfg is not None else Backend.TC_PIECEWISE
 
+    platform_backend_cls = current_platform.get_cuda_graph_backend_cls(
+        Phase.PREFILL, backend_name
+    )
+    if platform_backend_cls is not None:
+        return platform_backend_cls(cuda_graph_runner)
+
     if backend_name == Backend.BREAKABLE:
         return BreakableCudaGraphBackend(
             cuda_graph_runner,

@@ -12,7 +12,7 @@ Out-of-tree platforms register via setuptools entry_points under the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Type
+from typing import TYPE_CHECKING, Any, Callable, Optional, Type
 
 from sglang.srt.platforms.device_mixin import DeviceMixin, PlatformEnum
 
@@ -66,6 +66,18 @@ class SRTPlatform(DeviceMixin):
         Out-of-tree platforms can override a phase/backend combination while
         preserving SGLang's built-in backend resolution for every other case.
         """
+        return None
+
+    def get_piecewise_compiler(self, config: Any) -> Optional[Any]:
+        """Return a platform-specific piecewise compiler, if any.
+
+        The returned object must implement SGLang's ``CompilerInterface``.
+        Returning ``None`` preserves the built-in compiler resolution.
+        """
+        return None
+
+    def get_biased_grouped_topk_impl(self) -> Optional[Callable]:
+        """Return a platform-specific biased grouped top-k fallback, if any."""
         return None
 
     def get_mha_kv_pool_cls(self) -> type:
