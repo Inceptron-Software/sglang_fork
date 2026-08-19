@@ -347,6 +347,11 @@ class PiecewiseCompileInterpreter(torch.fx.Interpreter):
 model_tag: str = "backbone"
 
 
+def _get_cache_tag(config: CompilationConfig) -> str:
+    """Return a compiler-specific cache tag or the built-in model tag."""
+    return getattr(config, "cache_tag", None) or model_tag
+
+
 @contextmanager
 def set_model_tag(tag: str):
     """Context manager to set the model tag."""
@@ -412,7 +417,11 @@ class SGLangBackend:
         os.makedirs(cache_dir, exist_ok=True)
         rank = 0
         dp_rank = 0
-        local_cache_dir = os.path.join(cache_dir, f"rank_{rank}_{dp_rank}", model_tag)
+        local_cache_dir = os.path.join(
+            cache_dir,
+            f"rank_{rank}_{dp_rank}",
+            _get_cache_tag(self.compile_config),
+        )
         os.makedirs(local_cache_dir, exist_ok=True)
         self.compiler_manager.initialize_cache(
             local_cache_dir, disable_cache=False, prefix=""
