@@ -118,7 +118,11 @@ class CompilerManager:
         graph_index: int,
         runtime_shape: Optional[int] = None,
     ) -> Optional[Callable]:
-        handle = self.cache[(runtime_shape, graph_index, self.compiler.name)]
+        key = (runtime_shape, graph_index, self.compiler.name)
+        if key not in self.cache:
+            return None
+
+        handle = self.cache[key]
         compiled_graph = self.compiler.load(
             handle, graph, example_inputs, graph_index, runtime_shape
         )
@@ -156,9 +160,24 @@ class CompilerManager:
 
         compilation_counter.num_backend_compilations += 1
 
-        compiled_graph = None
-
-        # TODO(Yuwei): support cache loading
+        compiled_graph = self.load(graph, example_inputs, graph_index, runtime_shape)
+        if compiled_graph is not None:
+            if graph_index == num_graphs - 1:
+                elapsed = time.time() - compilation_start_time
+                if runtime_shape is None:
+                    logger.info(
+                        "Loaded the compiled graph(s) for dynamic shape from "
+                        "cache in %.2f s",
+                        elapsed,
+                    )
+                else:
+                    logger.info(
+                        "Loaded the compiled graph(s) for shape %s from cache "
+                        "in %.2f s",
+                        runtime_shape,
+                        elapsed,
+                    )
+            return compiled_graph
 
         # no compiler cached the graph, or the cache is disabled,
         # we need to compile it
