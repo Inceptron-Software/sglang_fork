@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 
 WEIGHT_LOADER_V2_SUPPORTED = [
     "CompressedTensorsLinearMethod",
+    "InceptronCompressedTensorsFp8LinearMethod",
     "AWQLinearMethod",
     "GPTQMarlinLinearMethod",
     "Fp8LinearMethod",
@@ -764,7 +765,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                     "the same for all partitions."
                 )
 
-        assert param_data.shape == loaded_weight.shape
+        if param_data.shape != loaded_weight.shape:
+            import sys; print(f"SHAPE_MISMATCH: param={param_data.shape} loaded={loaded_weight.shape} layer={type(self).__name__}", file=sys.stderr); assert False
         param_data.copy_(loaded_weight)
 
     def _load_fused_module_from_checkpoint(
