@@ -86,11 +86,63 @@ if _is_cuda or _is_xpu or _is_musa:
         except (ImportError, AttributeError):
             _flashinfer_layernorm_available = False
 
+        def _rmsnorm_quant_fake_impl(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+            scale: torch.Tensor,
+            out_dtype: torch.dtype,
+            eps: float = 1e-6,
+            enable_pdl: Optional[bool] = None,
+        ) -> torch.Tensor:
+            return torch.empty_like(input, dtype=out_dtype)
+
+        def _fused_add_rmsnorm_quant_fake_impl(
+            input: torch.Tensor,
+            residual: torch.Tensor,
+            weight: torch.Tensor,
+            scale: torch.Tensor,
+            out_dtype: torch.dtype,
+            eps: float = 1e-6,
+            enable_pdl: Optional[bool] = None,
+        ) -> Tuple[torch.Tensor, torch.Tensor]:
+            return torch.empty_like(input, dtype=out_dtype), residual
+
         try:
             from flashinfer.norm import (
-                fused_add_rmsnorm_quant as _flashinfer_fused_add_rmsnorm_quant,
+                fused_add_rmsnorm_quant as _flashinfer_fused_add_rmsnorm_quant_raw,
             )
-            from flashinfer.norm import rmsnorm_quant as _flashinfer_rmsnorm_quant
+            from flashinfer.norm import rmsnorm_quant as _flashinfer_rmsnorm_quant_raw
+
+            @register_custom_op(fake_impl=_rmsnorm_quant_fake_impl)
+            def _flashinfer_rmsnorm_quant(
+                input: torch.Tensor,
+                weight: torch.Tensor,
+                scale: torch.Tensor,
+                out_dtype: torch.dtype,
+                eps: float = 1e-6,
+                enable_pdl: Optional[bool] = None,
+            ) -> torch.Tensor:
+                out = torch.empty_like(input, dtype=out_dtype)
+                _flashinfer_rmsnorm_quant_raw(
+                    out, input, weight, scale, eps, enable_pdl
+                )
+                return out
+
+            @register_custom_op(fake_impl=_fused_add_rmsnorm_quant_fake_impl)
+            def _flashinfer_fused_add_rmsnorm_quant(
+                input: torch.Tensor,
+                residual: torch.Tensor,
+                weight: torch.Tensor,
+                scale: torch.Tensor,
+                out_dtype: torch.dtype,
+                eps: float = 1e-6,
+                enable_pdl: Optional[bool] = None,
+            ) -> Tuple[torch.Tensor, torch.Tensor]:
+                out = torch.empty_like(input, dtype=out_dtype)
+                _flashinfer_fused_add_rmsnorm_quant_raw(
+                    out, input, residual, weight, scale, eps, enable_pdl
+                )
+                return out, residual
 
             _flashinfer_rmsnorm_quant_available = True
         except (ImportError, AttributeError):
@@ -956,7 +1008,6 @@ class RMSNorm(BaseFusedOp):
         elif not x.is_contiguous():
             x = x.contiguous()
 
-        out = torch.empty_like(x, dtype=fp8_dtype)
         if residual is not None:
             if post_residual_addition is not None:
                 residual = residual + post_residual_addition
@@ -964,17 +1015,18 @@ class RMSNorm(BaseFusedOp):
                 residual = residual.contiguous().reshape(-1, residual.shape[-1])
             elif not residual.is_contiguous():
                 residual = residual.contiguous()
-            # In-place: residual += x, then out = quant(rmsnorm(residual) * w).
-            _flashinfer_fused_add_rmsnorm_quant(
-                out, x, residual, self.weight.data, scale, self.variance_epsilon
+            # Fused: residual += x, then out = quant(rmsnorm(residual) * w).
+            out, residual = _flashinfer_fused_add_rmsnorm_quant(
+                x, residual, self.weight.data, scale, fp8_dtype,
+                self.variance_epsilon,
             )
             if needs_reshape:
                 out = out.reshape(original_shape)
                 residual = residual.reshape(original_shape)
             return (out, scale, orig_dtype), residual
 
-        _flashinfer_rmsnorm_quant(
-            out, x, self.weight.data, scale, self.variance_epsilon
+        out = _flashinfer_rmsnorm_quant(
+            x, self.weight.data, scale, fp8_dtype, self.variance_epsilon
         )
         if needs_reshape:
             out = out.reshape(original_shape)

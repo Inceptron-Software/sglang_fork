@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
 
@@ -44,9 +44,34 @@ def _jit_fused_rope_module(
     )
 
 
+def _rotary_embedding_with_key_fake_impl(
+    positions: torch.Tensor,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    head_size: int,
+    cos_sin_cache: torch.Tensor,
+    is_neox: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    return query, key
+
+
+def _rotary_embedding_without_key_fake_impl(
+    positions: torch.Tensor,
+    query: torch.Tensor,
+    head_size: int,
+    cos_sin_cache: torch.Tensor,
+    is_neox: bool = True,
+) -> torch.Tensor:
+    return query
+
+
+# Functional (rather than mutating) custom ops: torch >= 2.13's
+# functionalization inside the piecewise compile rejects custom ops
+# whose schemas carry mutation annotations; allocate and return fresh
+# tensors instead.
 @register_custom_op(
     op_name="rotary_embedding_with_key",
-    mutates_args=["query", "key"],
+    fake_impl=_rotary_embedding_with_key_fake_impl,
 )
 def rotary_embedding_with_key(
     positions: torch.Tensor,
@@ -55,14 +80,17 @@ def rotary_embedding_with_key(
     head_size: int,
     cos_sin_cache: torch.Tensor,
     is_neox: bool = True,
-) -> None:
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    query = query.clone()
+    key = key.clone()
     module = _jit_rotary_embedding_module()
     module.rotary_embedding(positions, query, key, head_size, cos_sin_cache, is_neox)
+    return query, key
 
 
 @register_custom_op(
     op_name="rotary_embedding_without_key",
-    mutates_args=["query"],
+    fake_impl=_rotary_embedding_without_key_fake_impl,
 )
 def rotary_embedding_without_key(
     positions: torch.Tensor,
@@ -70,9 +98,11 @@ def rotary_embedding_without_key(
     head_size: int,
     cos_sin_cache: torch.Tensor,
     is_neox: bool = True,
-) -> None:
+) -> torch.Tensor:
+    query = query.clone()
     module = _jit_rotary_embedding_module()
     module.rotary_embedding(positions, query, None, head_size, cos_sin_cache, is_neox)
+    return query
 
 
 def rotary_embedding(
@@ -84,11 +114,11 @@ def rotary_embedding(
     is_neox: bool = True,
 ):
     if key is None:
-        rotary_embedding_without_key(
+        query = rotary_embedding_without_key(
             positions, query, head_size, cos_sin_cache, is_neox
         )
     else:
-        rotary_embedding_with_key(
+        query, key = rotary_embedding_with_key(
             positions, query, key, head_size, cos_sin_cache, is_neox
         )
     return query, key
