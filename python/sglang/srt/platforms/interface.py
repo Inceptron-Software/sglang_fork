@@ -60,6 +60,13 @@ class SRTPlatform(DeviceMixin):
         """Return the graph runner class for this platform."""
         raise NotImplementedError
 
+    def get_eager_runner_cls(self) -> Optional[type]:
+        """Return a platform-specific eager runner, if any.
+
+        Returning ``None`` preserves the built-in eager runner.
+        """
+        return None
+
     def get_cuda_graph_backend_cls(self, phase: str, backend: str) -> Optional[type]:
         """Return a platform-specific CUDA graph backend class, if any.
 

@@ -123,7 +123,8 @@ def capture_cuda_graphs(
     # it. Always built: it serves both the fully-disabled case (decode/prefill
     # runners point at it) and the eager fallback when a cg runner can't run a
     # batch.
-    eager_runner = EagerRunner(model_runner)
+    eager_runner_cls = current_platform.get_eager_runner_cls() or EagerRunner
+    eager_runner = eager_runner_cls(model_runner)
 
     # cuda-graph capture: prefill before decode, so both coalesce onto the
     # eager buffer allocated above. (capture_prefill_graph routes prefill

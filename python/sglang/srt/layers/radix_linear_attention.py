@@ -85,8 +85,8 @@ class RadixLinearAttention(nn.Module):
     ) -> torch.Tensor:
         if (
             forward_batch.forward_mode.is_extend()
-            and get_tc_piecewise_forward_context() is not None
-        ):
+            or forward_batch.forward_mode.is_decode()
+        ) and get_tc_piecewise_forward_context() is not None:
             # Output shape from linear attention: (1, seq_len, num_v_heads, head_v_dim)
             seq_len = mixed_qkv.shape[0]
             output = torch.empty(
