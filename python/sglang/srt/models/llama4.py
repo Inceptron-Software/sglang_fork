@@ -333,10 +333,12 @@ class Llama4Attention(nn.Module):
 
         if self.rotary_emb is not None:
             q_view, k_view = qk.split([self.q_size, self.kv_size], dim=-1)
-            q_out_unused, k_out_unused = self.rotary_emb(positions, q_view, k_view)
-            if _is_npu:
-                qk = torch.cat([q_out_unused, k_out_unused], dim=-1)
-            del q_view, k_view, q_out_unused, k_out_unused
+            q_rotated, k_rotated = self.rotary_emb(positions, q_view, k_view)
+            # CUDA eager RoPE updates these views in place, but torch.compile
+            # returns new tensors. Rebuild qk so attention uses rotated Q/K.
+            if _is_npu or self.rotary_emb.is_torch_compile:
+                qk = torch.cat([q_rotated, k_rotated], dim=-1)
+            del q_view, k_view, q_rotated, k_rotated
 
         if self.qk_norm is not None and _is_cuda:
             # Strided in-place fused QK RMSNorm reads/writes the qkv buffer

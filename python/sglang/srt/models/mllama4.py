@@ -14,6 +14,7 @@ from transformers.models.llama4.modeling_llama4 import (
     vision_apply_rotary_emb,
 )
 
+from sglang.srt.eplb.expert_location import get_global_expert_location_metadata
 from sglang.srt.layers.attention.vision import VisionAttention
 from sglang.srt.layers.linear import (
     ColumnParallelLinear,
@@ -23,6 +24,7 @@ from sglang.srt.layers.linear import (
 from sglang.srt.layers.logits_processor import LogitsProcessor
 from sglang.srt.layers.moe.fused_moe_triton import FusedMoE
 from sglang.srt.layers.quantization import QuantizationConfig
+from sglang.srt.layers.quantization.modelopt_quant import ModelOptFp8MoEMethod
 from sglang.srt.managers.mm_utils import (
     MultiModalityDataPaddingPatternMultimodalTokens,
     general_mm_embed_routine,
@@ -928,6 +930,43 @@ class Llama4ForConditionalGeneration(nn.Module):
         transformed_name, _, shard_id_list = self._transform_expert_name(
             name, is_weight=True
         )
+
+        param = params_dict.get(transformed_name)
+        weight_loader = getattr(param, "weight_loader", None)
+        moe_layer = getattr(weight_loader, "__self__", None)
+        can_load_bulk = (
+            param is not None
+            and (".experts.gate_up_proj" in name or ".experts.down_proj" in name)
+            and loaded_weight.ndim == 3
+            and loaded_weight.device.type == "cpu"
+            and loaded_weight.dtype == torch.float8_e4m3fn
+            and loaded_weight.is_contiguous()
+            and loaded_weight.shape[0] == num_experts
+            and param.device.type == "cuda"
+            and param.dtype == loaded_weight.dtype
+            and tuple(param.shape) == tuple(loaded_weight.transpose(1, 2).shape)
+            and moe_layer is not None
+            and moe_layer.moe_tp_size == 1
+            and moe_layer.moe_ep_size == 1
+            and moe_layer.num_local_experts == num_experts
+            and moe_layer._num_global_routed == num_experts
+            and not moe_layer._has_fused_shared
+            and not moe_layer.use_padded_loading
+            and not moe_layer.use_presharded_weights
+            and not moe_layer.use_triton_kernels
+            and not moe_layer.use_flashinfer_trtllm_moe
+            and isinstance(moe_layer.quant_method, ModelOptFp8MoEMethod)
+            and get_global_expert_location_metadata() is None
+        )
+        if can_load_bulk:
+            # Llama-4 stores both expert matrices with input and output dimensions
+            # opposite to the canonical fused-MoE buffers. Move the original
+            # contiguous all-expert tensor to CUDA once, then perform the layout
+            # conversion on the GPU instead of cloning every expert slice on CPU.
+            gpu_weight = loaded_weight.to(device=param.device, non_blocking=False)
+            param.data.copy_(gpu_weight.transpose(1, 2))
+            loaded_params.add(transformed_name)
+            return True
 
         if ".gate_up_proj" in name:
             loaded_weight_list = loaded_weight.chunk(2, dim=-1)
