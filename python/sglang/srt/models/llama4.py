@@ -330,22 +330,17 @@ class Llama4Attention(nn.Module):
         qkv, _ = self.qkv_proj(hidden_states)
 
         qk, v = qkv.split([self.q_size + self.kv_size, self.kv_size], dim=-1)
+        q, k = qk.split([self.q_size, self.kv_size], dim=-1)
 
         if self.rotary_emb is not None:
-            q_view, k_view = qk.split([self.q_size, self.kv_size], dim=-1)
-            q_rotated, k_rotated = self.rotary_emb(positions, q_view, k_view)
-            # CUDA eager RoPE updates these views in place, but torch.compile
-            # returns new tensors. Rebuild qk so attention uses rotated Q/K.
-            if _is_npu or self.rotary_emb.is_torch_compile:
-                qk = torch.cat([q_rotated, k_rotated], dim=-1)
-            del q_view, k_view, q_rotated, k_rotated
+            # Eager CUDA RoPE updates the views in place; compile mode returns
+            # new tensors. Consume those results directly in either case.
+            q, k = self.rotary_emb(positions, q, k)
 
         if self.qk_norm is not None and _is_cuda:
-            # Strided in-place fused QK RMSNorm reads/writes the qkv buffer
-            # directly via the split q/k views, so the reshape-to-(N, head_dim)
-            # copy is no longer needed. The remaining redundant copy
-            # (`q.contiguous()` inside the attention backend) is unrelated.
-            q, k = qk.split([self.q_size, self.kv_size], dim=-1)
+            # Strided fused QK RMSNorm handles both eager qkv views and the
+            # separate tensors returned by compiled RoPE without repacking.
+            # The attention backend's q.contiguous() is a separate layout step.
             q, k = apply_qk_norm(
                 q=q,
                 k=k,
@@ -353,13 +348,16 @@ class Llama4Attention(nn.Module):
                 k_norm=self.qk_norm,
                 head_dim=self.head_dim,
             )
-        else:
-            if self.qk_norm is not None:
-                # NPU/other: qk has been rebuilt via torch.cat after RoPE, so
-                # this reshape is a free view; keep the previous path.
-                qk = qk.reshape(-1, self.head_dim).contiguous().bfloat16()
-                qk = self.qk_norm(qk).to(torch.bfloat16)
-                qk = qk.reshape(-1, self.q_size + self.kv_size)
+        elif self.qk_norm is not None:
+            # Only the combined normalization path needs to rebuild qk
+            # after out-of-place RoPE. CUDA normalizes q and k separately.
+            if self.rotary_emb is not None and (
+                _is_npu or self.rotary_emb.is_torch_compile
+            ):
+                qk = torch.cat([q, k], dim=-1)
+            qk = qk.reshape(-1, self.head_dim).contiguous().bfloat16()
+            qk = self.qk_norm(qk).to(torch.bfloat16)
+            qk = qk.reshape(-1, self.q_size + self.kv_size)
             q, k = qk.split([self.q_size, self.kv_size], dim=-1)
 
         # We are applying temperature tuning (https://arxiv.org/abs/2501.19399) to NoPE layers, where
