@@ -333,14 +333,12 @@ class Llama4Attention(nn.Module):
         q, k = qk.split([self.q_size, self.kv_size], dim=-1)
 
         if self.rotary_emb is not None:
-            # Eager CUDA RoPE updates the views in place; compile mode returns
-            # new tensors. Consume those results directly in either case.
+            # RoPE returns Q/K in both eager and compile modes; consume them without repacking.
             q, k = self.rotary_emb(positions, q, k)
 
         if self.qk_norm is not None and _is_cuda:
-            # Strided fused QK RMSNorm handles both eager qkv views and the
-            # separate tensors returned by compiled RoPE without repacking.
-            # The attention backend's q.contiguous() is a separate layout step.
+            # QK RMSNorm accepts strided views and separate compiled RoPE results directly.
+            # The attention backend still handles its own contiguous layout requirement.
             q, k = apply_qk_norm(
                 q=q,
                 k=k,
@@ -349,8 +347,7 @@ class Llama4Attention(nn.Module):
                 head_dim=self.head_dim,
             )
         elif self.qk_norm is not None:
-            # Only the combined normalization path needs to rebuild qk
-            # after out-of-place RoPE. CUDA normalizes q and k separately.
+            # Combined normalization needs packed Q/K after out-of-place RoPE.
             if self.rotary_emb is not None and (
                 _is_npu or self.rotary_emb.is_torch_compile
             ):
