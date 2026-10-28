@@ -1210,13 +1210,8 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             and forward_batch.forward_mode.is_target_verify()
             and self.attn_backend.use_captured_forward_metadata_for_breakable_cuda_graph
         )
-        import os as _os, time as _time
-        _step_timing = _os.environ.get("SGLANG_STEP_TIMING")
-        _t0 = _time.perf_counter() if _step_timing else 0.0
         with timer_ctx, self.backend.replay_session():
             self.load_batch(forward_batch, pp_proxy_tensors)
-            if _step_timing:
-                _t1 = _time.perf_counter()
             if envs.SGLANG_LOG_DECODE_GRAPH_KEY.get():
                 logger.info(
                     "Decode graph replay: worker=%s key_size=%s (%s) mode=%s raw_bs=%d%s",
@@ -1235,17 +1230,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 read_done = self.device_module.Event()
                 read_done.record()
                 self.model_runner.war_fastpath_read_done_event = read_done
-            if _step_timing:
-                _t2 = _time.perf_counter()
             output = self.backend.replay(self._replay_graph_key, forward_batch)
-            if _step_timing:
-                _t3 = _time.perf_counter()
-                import logging as _logging
-                _logging.getLogger(__name__).info(
-                    "STEP_TIMING load_us=%.0f replay_us=%.0f",
-                    (_t1 - _t0) * 1e6,
-                    (_t3 - _t2) * 1e6,
-                )
             if read_done_post_replay:
                 read_done = self.device_module.Event()
                 read_done.record()
