@@ -1741,8 +1741,13 @@ class Scheduler(
             self.running_batch = plan.running_batch
             batch = plan.batch_to_run
             self.cur_batch_for_debug = batch
+            # Planning may reuse last_batch as running_batch and change its
+            # mode to DECODE. The queued snapshot retains the previous forward.
+            previous_forward = (
+                self.result_queue[-1][0] if self.result_queue else self.last_batch
+            )
             disable_overlap_for_batch = self.is_disable_overlap_for_batch(
-                batch, last_batch=self.last_batch
+                batch, last_batch=previous_forward
             )
 
             # If we do not need to overlap the current batch with the last batch,

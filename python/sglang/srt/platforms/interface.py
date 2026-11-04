@@ -12,7 +12,7 @@ Out-of-tree platforms register via setuptools entry_points under the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Type
+from typing import TYPE_CHECKING, Any, Callable, Optional, Type
 
 from sglang.srt.platforms.device_mixin import DeviceMixin, PlatformEnum
 
@@ -59,6 +59,33 @@ class SRTPlatform(DeviceMixin):
     def get_graph_runner_cls(self) -> type:
         """Return the graph runner class for this platform."""
         raise NotImplementedError
+
+    def get_eager_runner_cls(self) -> Optional[type]:
+        """Return a platform-specific eager runner, if any.
+
+        Returning ``None`` preserves the built-in eager runner.
+        """
+        return None
+
+    def get_cuda_graph_backend_cls(self, phase: str, backend: str) -> Optional[type]:
+        """Return a platform-specific CUDA graph backend class, if any.
+
+        Out-of-tree platforms can override a phase/backend combination while
+        preserving SGLang's built-in backend resolution for every other case.
+        """
+        return None
+
+    def get_piecewise_compiler(self, config: Any) -> Optional[Any]:
+        """Return a platform-specific piecewise compiler, if any.
+
+        The returned object must implement SGLang's ``CompilerInterface``.
+        Returning ``None`` preserves the built-in compiler resolution.
+        """
+        return None
+
+    def get_biased_grouped_topk_impl(self) -> Optional[Callable]:
+        """Return a platform-specific biased grouped top-k fallback, if any."""
+        return None
 
     def get_mha_kv_pool_cls(self) -> type:
         """Return the MHA KV pool class for this platform."""
@@ -124,6 +151,14 @@ class SRTPlatform(DeviceMixin):
 
     def init_backend(self) -> None:
         """One-time backend initialization.  Called in each worker."""
+        pass
+
+    def post_load_model(self, model_runner) -> None:
+        """Prepare platform-owned model state before KV planning and backend init."""
+        pass
+
+    def post_cuda_graphs(self, model_runner) -> None:
+        """Prepare additional platform graph runners after ordinary graph capture."""
         pass
 
     # ------------------------------------------------------------------

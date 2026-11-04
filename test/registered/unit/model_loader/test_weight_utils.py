@@ -4,8 +4,14 @@ import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from sglang.srt.model_loader.weight_utils import filter_duplicate_safetensors_files
+from sglang.srt.model_loader import weight_utils
+from sglang.srt.model_loader.weight_utils import (
+    filter_duplicate_safetensors_files,
+    get_quant_config,
+)
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -82,6 +88,44 @@ class TestFilterDuplicateSafetensorsFiles(CustomTestCase):
             index_file=INDEX_NAME,
         )
         self.assertEqual(result, [single])
+
+
+class TestQuantizationConfigHook(CustomTestCase):
+    def test_file_based_modelopt_fp8_uses_platform_quantization_class(self):
+        class PlatformModelOptFp8Config:
+            @staticmethod
+            def get_config_filenames():
+                return ["hf_quant_config.json"]
+
+            @classmethod
+            def from_config(cls, config):
+                return cls()
+
+        with tempfile.TemporaryDirectory() as model_path:
+            with open(os.path.join(model_path, "hf_quant_config.json"), "w") as f:
+                json.dump(
+                    {
+                        "producer": {"name": "modelopt"},
+                        "quantization": {"quant_algo": "FP8"},
+                    },
+                    f,
+                )
+            model_config = SimpleNamespace(
+                quantization="modelopt_fp8",
+                hf_config=SimpleNamespace(quantization_config=None, text_config=None),
+                model_path=model_path,
+                revision=None,
+            )
+            load_config = SimpleNamespace(model_loader_extra_config=None)
+
+            with patch.object(
+                weight_utils,
+                "get_quantization_config",
+                return_value=PlatformModelOptFp8Config,
+            ):
+                config = get_quant_config(model_config, load_config, {})
+
+        self.assertIsInstance(config, PlatformModelOptFp8Config)
 
 
 if __name__ == "__main__":

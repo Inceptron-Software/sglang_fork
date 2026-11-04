@@ -63,7 +63,14 @@ class MultiPlatformOp(nn.Module):
                 self._forward_method = fused_moe_forward_native
         elif "TopK" in self.__class__.__name__:
             if num_tokens == 1:
-                self._forward_method = self.forward_native
+                # Registered OOT forwards remain valid during compilation.
+                key = current_platform.get_dispatch_key_name()
+                forward = self._oot_forward_registry.get(key, {}).get(type(self))
+                self._forward_method = (
+                    forward.__get__(self)
+                    if forward is not None
+                    else self.forward_native
+                )
         else:
             self._forward_method = self.forward_native
         self.is_torch_compile = True

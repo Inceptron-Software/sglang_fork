@@ -3,6 +3,8 @@
 import unittest
 from types import SimpleNamespace
 
+from torch import nn
+
 from sglang.srt.model_executor.model_runner_components.layer_setup import (
     compute_attention_and_moe_layers,
 )
@@ -12,6 +14,33 @@ register_cpu_ci(est_time=1, suite="base-a-test-cpu")
 
 
 class TestComputeAttentionAndMoeLayers(unittest.TestCase):
+    def test_llama4_feed_forward_is_discovered_as_moe(self):
+        class Layer(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.self_attn = SimpleNamespace(attn=object())
+                self.feed_forward = SimpleNamespace(experts=object())
+
+        for layers in (nn.ModuleList([Layer()]), nn.ModuleDict({"0": Layer()})):
+            with self.subTest(container=type(layers).__name__):
+                layer = next(
+                    iter(
+                        layers.values() if isinstance(layers, nn.ModuleDict) else layers
+                    )
+                )
+                metadata = compute_attention_and_moe_layers(
+                    SimpleNamespace(layers=layers)
+                )
+                self.assertEqual(metadata.moe_layers, [layer.feed_forward.experts])
+                self.assertEqual(metadata.moe_fusions, [layer.feed_forward])
+
+    def test_feed_forward_does_not_override_existing_moe(self):
+        mlp = SimpleNamespace(experts=object())
+        layer = SimpleNamespace(mlp=mlp, feed_forward=SimpleNamespace(experts=object()))
+        metadata = compute_attention_and_moe_layers(SimpleNamespace(layers=[layer]))
+        self.assertEqual(metadata.moe_layers, [mlp.experts])
+        self.assertEqual(metadata.moe_fusions, [mlp])
+
     def test_deepseek_mla_registers_mha_companion(self):
         attn_mqa = SimpleNamespace()
         attn_mha = SimpleNamespace()

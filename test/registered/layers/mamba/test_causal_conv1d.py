@@ -266,7 +266,7 @@ def test_causal_conv1d_update_with_batch_gather(
 @pytest.mark.parametrize("silu_activation", [True])
 @pytest.mark.parametrize("has_bias", [True])
 @pytest.mark.parametrize("width", [4])
-@pytest.mark.parametrize("seqlen", [8, 30, 249, 2049, 4096])
+@pytest.mark.parametrize("seqlen", [8, 30, 249, 2049, 4096, "mixed"])
 @pytest.mark.parametrize("dim", [64, 4096])
 @pytest.mark.parametrize("with_padding", [True, False])
 @pytest.mark.parametrize("batch", [4, 10])
@@ -287,13 +287,18 @@ def test_causal_conv1d_varlen(
     padded_batch_size = batch_size + padding
     nsplits = padded_batch_size - 1
 
-    eos_pos = torch.randperm(seqlen - 1)[:nsplits].sort().values
-
-    seqlens.append(
-        torch.diff(
-            torch.cat([torch.tensor([-1]), eos_pos, torch.tensor([seqlen - 1])])
-        ).tolist()
-    )
+    if seqlen == "mixed":
+        # A long prefill beside single-token decodes exercises the packed
+        # grid, including initial states and padded request slots below.
+        seqlens.append([4096] + [1] * nsplits)
+        seqlen = sum(seqlens[-1])
+    else:
+        eos_pos = torch.randperm(seqlen - 1)[:nsplits].sort().values
+        seqlens.append(
+            torch.diff(
+                torch.cat([torch.tensor([-1]), eos_pos, torch.tensor([seqlen - 1])])
+            ).tolist()
+        )
     assert sum(seqlens[-1]) == seqlen
     assert all(s > 0 for s in seqlens[-1])
 

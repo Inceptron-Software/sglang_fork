@@ -94,84 +94,134 @@ class TestRadixAttentionGraphInterface(CustomTestCase):
             (True, True): "breakable_unified_attention_with_output_and_lse",
         }
 
-        for breakable in (False, True):
-            for return_lse in (False, True):
-                with self.subTest(breakable=breakable, return_lse=return_lse):
-                    forward_batch = SimpleNamespace(
-                        forward_mode=ForwardMode.EXTEND,
-                        mha_return_lse=return_lse,
-                    )
-                    calls = []
-
-                    def output_only(*args, **kwargs):
-                        args[3].fill_(5)
-                        calls.append(kwargs)
-
-                    def output_and_lse(*args, **kwargs):
-                        args[3].fill_(5)
-                        calls.append(kwargs)
-                        return torch.full((4, 2), 11, dtype=torch.float32)
-
-                    with ExitStack() as stack:
-                        stack.enter_context(
-                            patch.object(
-                                radix_attention_module,
-                                "get_tc_piecewise_forward_context",
-                                return_value=SimpleNamespace(
-                                    mha_companion_layers=[layer]
-                                ),
-                            )
-                        )
-                        stack.enter_context(
-                            patch.object(
-                                radix_attention_module,
-                                "is_in_breakable_cuda_graph",
-                                return_value=breakable,
-                            )
-                        )
-                        mocks = {
-                            name: stack.enter_context(
-                                patch.object(
-                                    radix_attention_module,
-                                    name,
-                                    side_effect=(
-                                        output_and_lse
-                                        if name.endswith("and_lse")
-                                        else output_only
-                                    ),
-                                )
-                            )
-                            for name in op_names.values()
-                        }
-                        result = layer(
+        for forward_mode in (ForwardMode.EXTEND, ForwardMode.DECODE):
+            for breakable in (False, True):
+                for return_lse in (False, True):
+                    with self.subTest(
+                        forward_mode=forward_mode,
+                        breakable=breakable,
+                        return_lse=return_lse,
+                    ):
+                        self._assert_forward_dispatch(
+                            layer,
                             query,
                             key,
                             value,
-                            forward_batch,
-                            key_value_num_tokens=3,
+                            op_names,
+                            forward_mode,
+                            breakable,
+                            return_lse,
                         )
 
-                    selected_name = op_names[(breakable, return_lse)]
-                    for name, mock in mocks.items():
-                        self.assertEqual(mock.call_count, int(name == selected_name))
+    def _assert_forward_dispatch(
+        self,
+        layer,
+        query,
+        key,
+        value,
+        op_names,
+        forward_mode,
+        breakable,
+        return_lse,
+    ):
+        forward_batch = SimpleNamespace(
+            forward_mode=forward_mode,
+            mha_return_lse=return_lse,
+        )
+        calls = []
 
-                    self.assertEqual(
-                        calls,
-                        [
-                            {
-                                "use_mha_companion": True,
-                                "key_value_num_tokens": 3,
-                            }
-                        ],
+        def output_only(*args, **kwargs):
+            args[3].fill_(5)
+            calls.append(kwargs)
+
+        def output_and_lse(*args, **kwargs):
+            args[3].fill_(5)
+            calls.append(kwargs)
+            return torch.full((4, 2), 11, dtype=torch.float32)
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    radix_attention_module,
+                    "get_tc_piecewise_forward_context",
+                    return_value=SimpleNamespace(mha_companion_layers=[layer]),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    radix_attention_module,
+                    "is_in_breakable_cuda_graph",
+                    return_value=breakable,
+                )
+            )
+            mocks = {
+                name: stack.enter_context(
+                    patch.object(
+                        radix_attention_module,
+                        name,
+                        side_effect=(
+                            output_and_lse if name.endswith("and_lse") else output_only
+                        ),
                     )
-                    if return_lse:
-                        output, lse = result
-                        self.assertEqual(lse.shape, (4, 2))
-                        self.assertTrue(torch.all(lse == 11))
-                    else:
-                        output = result
-                    self.assertEqual(output.shape, query.shape)
-                    self.assertTrue(torch.all(output == 5))
+                )
+                for name in op_names.values()
+            }
+            result = layer(
+                query,
+                key,
+                value,
+                forward_batch,
+                key_value_num_tokens=3,
+            )
+
+        selected_name = op_names[(breakable, return_lse)]
+        for name, mock in mocks.items():
+            self.assertEqual(mock.call_count, int(name == selected_name))
+
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "use_mha_companion": True,
+                    "key_value_num_tokens": 3,
+                }
+            ],
+        )
+        if return_lse:
+            output, lse = result
+            self.assertEqual(lse.shape, (4, 2))
+            self.assertTrue(torch.all(lse == 11))
+        else:
+            output = result
+        self.assertEqual(output.shape, query.shape)
+        self.assertTrue(torch.all(output == 5))
+
+    def test_decode_without_piecewise_context_uses_attention_backend(self):
+        layer = self._new_layer()
+        query = torch.zeros((2, 2, 3))
+        backend = _RecordingAttentionBackend(return_lse=False)
+        forward_batch = SimpleNamespace(
+            forward_mode=ForwardMode.DECODE,
+            _attn_output=None,
+            out_cache_loc=torch.arange(2, dtype=torch.int64),
+        )
+
+        with (
+            patch.object(
+                radix_attention_module,
+                "get_tc_piecewise_forward_context",
+                return_value=None,
+            ),
+            patch.object(
+                radix_attention_module,
+                "get_attn_backend",
+                return_value=backend,
+            ),
+        ):
+            output = layer(query, query, query, forward_batch)
+
+        self.assertEqual(len(backend.calls), 1)
+        self.assertTrue(torch.all(output == 3))
 
     def test_impl_preserves_attention_identity_and_lse(self):
         mqa = SimpleNamespace()

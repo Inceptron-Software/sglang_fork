@@ -86,6 +86,14 @@ def compute_attention_and_moe_layers(layer_model: Any) -> AttentionAndMoeLayers:
         if hasattr(layer, "mixer") and hasattr(layer.mixer, "experts"):
             moe_block = layer.mixer.experts
             moe_fusion = layer.mixer
+        # Llama-4 stores its MoE block under feed_forward.
+        if (
+            moe_block is None
+            and hasattr(layer, "feed_forward")
+            and hasattr(layer.feed_forward, "experts")
+        ):
+            moe_block = layer.feed_forward.experts
+            moe_fusion = layer.feed_forward
         moe_layers.append(moe_block)
         moe_fusions.append(moe_fusion)
         # NSA indexers (None for layers without NSA)

@@ -603,6 +603,9 @@ class ModelRunner:
             moe_ep_rank=self.ps.moe_ep_rank,
         )
 
+        if current_platform.is_out_of_tree():
+            current_platform.post_load_model(self)
+
         self.maybe_init_dwdp()
 
         # Must run before backend/graph init so no draft graph records a
@@ -949,6 +952,8 @@ class ModelRunner:
         self.decode_cuda_graph_runner = capture.decode.runner
         self.graph_memory_usage = capture.memory_usage
         self.graph_time_usage = capture.time_usage
+        if current_platform.is_out_of_tree():
+            current_platform.post_cuda_graphs(self)
 
     def init_routed_experts_capturer(self):
         if self.is_draft_worker:

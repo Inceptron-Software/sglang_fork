@@ -1857,6 +1857,14 @@ async def benchmark(
             )
 
     result_details = {
+        # Relative to this run, after admission through the concurrency semaphore.
+        # Backends without start-time instrumentation report null rather than a
+        # misleading negative offset. Latencies include the complete response.
+        "start_times": [
+            output.start_time - benchmark_start_time if output.start_time else None
+            for output in outputs
+        ],
+        "latencies": [output.latency for output in outputs],
         "input_lens": [output.prompt_len for output in outputs],
         "output_lens": output_lens,
         "ttfts": [output.ttft for output in outputs],

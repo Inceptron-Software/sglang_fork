@@ -29,6 +29,7 @@ def _causal_conv1d_fwd_kernel(  # continuous batching
     # Matrix dimensions
     dim: tl.constexpr,
     seqlen: tl.int32,  # cu_seqlen
+    num_sequences: tl.int32,
     num_cache_lines: tl.constexpr,  # added to support vLLM larger cache lines
     # Strides
     stride_x_seq: tl.constexpr,  # stride to get to next sequence,
@@ -55,6 +56,8 @@ def _causal_conv1d_fwd_kernel(  # continuous batching
     NP2_STATELEN: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    PACKED_GRID: tl.constexpr,
+    SCAN_SIZE: tl.constexpr,
 ):
     conv_states_ptr = initial_states_ptr
     conv_state_indices_ptr = cache_indices_ptr
@@ -69,8 +72,23 @@ def _causal_conv1d_fwd_kernel(  # continuous batching
     # rather than mixing sequences - to make updating initial_states across sequences efficiently
 
     # single-sequence id
-    idx_seq = tl.program_id(0)
-    chunk_offset = tl.program_id(1)
+    if PACKED_GRID:
+        # Mixed batches contain long prefills and single-token decodes. Map
+        # only their active chunks instead of launching max-length chunks
+        # for every decode request. Keep the convolution and state math intact.
+        sequences = tl.arange(0, SCAN_SIZE)
+        active = sequences < num_sequences
+        starts = tl.load(query_start_loc_ptr + sequences, active, 0)
+        ends = tl.load(query_start_loc_ptr + sequences + 1, active, 0)
+        chunks = (ends - starts + BLOCK_M - 1) // BLOCK_M
+        prefix = tl.cumsum(chunks, 0)
+        tile = tl.program_id(0)
+        idx_seq = tl.sum(((tile >= prefix) & active).to(tl.int32), 0)
+        begin = tl.sum(tl.where(sequences < idx_seq, chunks, 0), 0)
+        chunk_offset = tile - begin
+    else:
+        idx_seq = tl.program_id(0)
+        chunk_offset = tl.program_id(1)
 
     # BLOCK_N elements along the feature-dimension (channel)
     idx_feats = tl.program_id(2) * BLOCK_N + tl.arange(0, BLOCK_N)
@@ -503,8 +521,25 @@ def causal_conv1d_fn(
         assert (dim, width) == weight.shape
         assert is_channel_last, "Need to run in channel-last layout"
 
+    block_m = 8
+    max_seq_len = int(max(seq_lens_cpu))
+    total_chunks = 0
+    packed_grid = False
+    # Avoid the scan for short or uniform batches, where the original grid
+    # already has little empty work. Mixed prefill/decode lengths are skewed.
+    if (
+        len(seq_lens_cpu) > 4
+        and max_seq_len > 32
+        and max_seq_len > 4 * int(min(seq_lens_cpu))
+    ):
+        total_chunks = sum(triton.cdiv(int(length), block_m) for length in seq_lens_cpu)
+        packed_grid = (
+            len(seq_lens_cpu) * triton.cdiv(max_seq_len, block_m) > 4 * total_chunks
+        )
+
     def grid(META):
-        max_seq_len = max(seq_lens_cpu)
+        if packed_grid:
+            return (total_chunks, 1, triton.cdiv(dim, META["BLOCK_N"]))
         return (
             len(seq_lens_cpu),  # batch_size
             (max_seq_len + META["BLOCK_M"] - 1) // META["BLOCK_M"],
@@ -524,6 +559,7 @@ def causal_conv1d_fn(
         # Matrix dimensions
         dim,
         cu_seqlen,
+        len(seq_lens_cpu) if packed_grid else 0,
         num_cache_lines,
         # stride
         stride_x_seq,
@@ -540,6 +576,8 @@ def causal_conv1d_fn(
         # others
         pad_slot_id,
         # META
+        PACKED_GRID=packed_grid,
+        SCAN_SIZE=triton.next_power_of_2(len(seq_lens_cpu)) if packed_grid else 1,
         HAS_BIAS=bias is not None,
         KERNEL_WIDTH=width,
         SILU_ACTIVATION=activation in ["silu", "swish"],
@@ -549,7 +587,7 @@ def causal_conv1d_fn(
         USE_PAD_SLOT=pad_slot_id is not None,
         NP2_STATELEN=np2_statelen,
         # launch_cooperative_grid=True
-        BLOCK_M=8,
+        BLOCK_M=block_m,
         BLOCK_N=256,
         num_stages=2,
     )
