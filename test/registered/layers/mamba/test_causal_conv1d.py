@@ -288,8 +288,8 @@ def test_causal_conv1d_varlen(
     nsplits = padded_batch_size - 1
 
     if seqlen == "mixed":
-        # A long prefill beside single-token decodes exercises the packed
-        # grid, including initial states and padded request slots below.
+        # Cover a long prefill beside single-token decodes, including
+        # initial states and padded request slots below.
         seqlens.append([4096] + [1] * nsplits)
         seqlen = sum(seqlens[-1])
     else:

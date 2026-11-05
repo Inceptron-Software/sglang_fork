@@ -118,11 +118,7 @@ class CompilerManager:
         graph_index: int,
         runtime_shape: Optional[int] = None,
     ) -> Optional[Callable]:
-        key = (runtime_shape, graph_index, self.compiler.name)
-        if key not in self.cache:
-            return None
-
-        handle = self.cache[key]
+        handle = self.cache[(runtime_shape, graph_index, self.compiler.name)]
         compiled_graph = self.compiler.load(
             handle, graph, example_inputs, graph_index, runtime_shape
         )
@@ -160,24 +156,9 @@ class CompilerManager:
 
         compilation_counter.num_backend_compilations += 1
 
-        compiled_graph = self.load(graph, example_inputs, graph_index, runtime_shape)
-        if compiled_graph is not None:
-            if graph_index == num_graphs - 1:
-                elapsed = time.time() - compilation_start_time
-                if runtime_shape is None:
-                    logger.info(
-                        "Loaded the compiled graph(s) for dynamic shape from "
-                        "cache in %.2f s",
-                        elapsed,
-                    )
-                else:
-                    logger.info(
-                        "Loaded the compiled graph(s) for shape %s from cache "
-                        "in %.2f s",
-                        runtime_shape,
-                        elapsed,
-                    )
-            return compiled_graph
+        compiled_graph = None
+
+        # TODO(Yuwei): support cache loading
 
         # no compiler cached the graph, or the cache is disabled,
         # we need to compile it
@@ -370,11 +351,6 @@ class PiecewiseCompileInterpreter(torch.fx.Interpreter):
 model_tag: str = "backbone"
 
 
-def _get_cache_tag(config: CompilationConfig) -> str:
-    """Return a compiler-specific cache tag or the built-in model tag."""
-    return getattr(config, "cache_tag", None) or model_tag
-
-
 @contextmanager
 def set_model_tag(tag: str):
     """Context manager to set the model tag."""
@@ -441,11 +417,7 @@ class SGLangBackend:
         os.makedirs(cache_dir, exist_ok=True)
         rank = 0
         dp_rank = 0
-        local_cache_dir = os.path.join(
-            cache_dir,
-            f"rank_{rank}_{dp_rank}",
-            _get_cache_tag(self.compile_config),
-        )
+        local_cache_dir = os.path.join(cache_dir, f"rank_{rank}_{dp_rank}", model_tag)
         os.makedirs(local_cache_dir, exist_ok=True)
         self.compiler_manager.initialize_cache(
             local_cache_dir, disable_cache=False, prefix=""

@@ -26,13 +26,8 @@ def test_explicit_prefill_backend_bypasses_memory_gate():
     )
 
 
-@pytest.mark.parametrize("custom_runner", [False, True])
-def test_capture_selects_platform_eager_runner(monkeypatch, custom_runner):
+def test_capture_uses_builtin_eager_runner(monkeypatch):
     stock_runner = Mock(return_value="stock-runner")
-    platform_runner = Mock(return_value="platform-runner")
-    platform = SimpleNamespace(
-        get_eager_runner_cls=lambda: platform_runner if custom_runner else None
-    )
     model_runner = SimpleNamespace(
         is_draft_worker=False,
         device="cpu",
@@ -40,7 +35,7 @@ def test_capture_selects_platform_eager_runner(monkeypatch, custom_runner):
         server_args=SimpleNamespace(forward_hooks=None, enable_symm_mem=False),
         canary_manager=None,
     )
-    monkeypatch.setattr(cuda_graph_setup, "current_platform", platform)
+    monkeypatch.setattr(cuda_graph_setup, "current_platform", SimpleNamespace())
     monkeypatch.setattr(cuda_graph_setup, "EagerRunner", stock_runner)
     monkeypatch.setattr(
         cuda_graph_setup.GraphSharedOutput, "create_for_model_runner", Mock()
@@ -52,11 +47,9 @@ def test_capture_selects_platform_eager_runner(monkeypatch, custom_runner):
         model_runner=model_runner, capture_decode_cuda_graph=False
     )
 
-    expected_runner = platform_runner if custom_runner else stock_runner
-    expected_runner.assert_called_once_with(model_runner)
-    (stock_runner if custom_runner else platform_runner).assert_not_called()
-    assert capture.eager_runner == expected_runner.return_value
-    assert capture.decode.runner == expected_runner.return_value
+    stock_runner.assert_called_once_with(model_runner)
+    assert capture.eager_runner == stock_runner.return_value
+    assert capture.decode.runner == stock_runner.return_value
 
 
 def test_model_runner_can_override_decode_graph_runner(monkeypatch):

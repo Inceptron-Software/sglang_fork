@@ -48,7 +48,7 @@ class TestCompilerManagerCache(CustomTestCase):
             )
             self.assertTrue(manager.is_cache_updated)
 
-    def test_persisted_handle_is_loaded_without_recompiling(self):
+    def test_persisted_handle_delegates_cache_validation_to_compiler(self):
         for runtime_shape in (None, 8):
             with self.subTest(
                 runtime_shape=runtime_shape
@@ -76,12 +76,12 @@ class TestCompilerManagerCache(CustomTestCase):
                 )
 
                 self.assertIs(result, loaded_callable)
-                second_compiler.compile.assert_not_called()
-                second_compiler.load.assert_called_once_with(
-                    "persisted-artifact-handle",
+                second_compiler.load.assert_not_called()
+                second_compiler.compile.assert_called_once_with(
                     graph,
                     inputs,
-                    0,
+                    {"option": True},
                     runtime_shape,
+                    f"artifact_shape_{runtime_shape}_subgraph_0",
                 )
                 self.assertFalse(second_manager.is_cache_updated)
