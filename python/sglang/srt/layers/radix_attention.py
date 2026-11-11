@@ -37,6 +37,18 @@ from sglang.srt.utils.custom_op import register_custom_op
 
 _is_hip = is_hip()
 
+
+def _cast_query_fp8_fake(q: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(q, dtype=torch.float8_e4m3fn)
+
+
+@register_custom_op(fake_impl=_cast_query_fp8_fake)
+def cast_query_fp8(q: torch.Tensor) -> torch.Tensor:
+    # Keep Torch's overflow-to-NaN conversion opaque to Inductor's saturating conversion.
+    assert q.dtype == torch.bfloat16
+    return q.to(torch.float8_e4m3fn)
+
+
 # When set, RadixAttention.forward runs the attention backend eagerly instead of
 # routing through the tc-piecewise split op. A caller already inside a
 # breakable-CUDA-graph eager break (e.g. Inkling wrapping norm+attn+sconv in one eager
@@ -213,6 +225,11 @@ class RadixAttention(nn.Module):
             out_dtype = v.dtype if v is not None else q.dtype
             if out_dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
                 out_dtype = torch.bfloat16
+            if q.dtype == torch.bfloat16 and q.ndim == 2:
+                query_dtype = get_attn_backend().get_query_input_dtype(self, forward_batch)
+                if query_dtype is not None:
+                    assert query_dtype == torch.float8_e4m3fn
+                    q = cast_query_fp8(q)
             if self.qk_head_dim != self.v_head_dim:
                 output = q.new_empty(
                     (q.shape[0], self.tp_q_head_num * self.v_head_dim),

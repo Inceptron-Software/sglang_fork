@@ -185,6 +185,12 @@ class AttentionBackend(ABC):
         """
         raise NotImplementedError()
 
+    def get_query_input_dtype(
+        self, layer: RadixAttention, forward_batch: ForwardBatch
+    ) -> Optional[torch.dtype]:
+        """Return a query cast that may be traced before the attention call."""
+        return None
+
     @debug_kernel_api
     def forward(
         self,

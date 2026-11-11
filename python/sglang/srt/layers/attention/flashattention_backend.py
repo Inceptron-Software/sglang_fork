@@ -1119,6 +1119,28 @@ class FlashAttentionBackend(AttentionBackend):
 
         self.forward_metadata = metadata
 
+    def get_query_input_dtype(
+        self, layer: RadixAttention, forward_batch: ForwardBatch
+    ) -> Optional[torch.dtype]:
+        # Keep the eager conversion for other attention and cache formats.
+        if (
+            self.fa_impl_ver != 3
+            or self.use_mla
+            or self.fa_skip_kv_cache
+            or self.kv_cache_is_mxfp8
+            or self.kv_cache_dtype_str == "auto"
+            or self.kv_cache_dtype != torch.float8_e4m3fn
+            or layer.head_dim > 256
+            or layer.is_cross_attention
+            or layer.attn_type != AttentionType.DECODER
+            or not (
+                forward_batch.forward_mode.is_extend()
+                or forward_batch.forward_mode.is_decode()
+            )
+        ):
+            return None
+        return self.kv_cache_dtype
+
     def forward_extend(
         self,
         q: torch.Tensor,
