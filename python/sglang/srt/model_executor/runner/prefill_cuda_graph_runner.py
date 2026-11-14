@@ -662,7 +662,9 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         )
         set_is_extend_in_batch(False)
 
-        with self._prefill_forward_context(forward_batch):
+        with self._prefill_forward_context(
+            forward_batch, num_tokens=num_tokens, raw_num_tokens=num_tokens
+        ):
             if self._uses_eager_prefill_tail():
                 # BCG / Full: capture the transformer body only.
                 positions = self._get_layer_model_positions(forward_batch)

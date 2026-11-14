@@ -4994,7 +4994,8 @@ class ServerArgs:
         captured token count (one shape knob per phase).
         """
         capture_sizes = (
-            list(range(4, 33, 4))
+            [1, 2]
+            + list(range(4, 33, 4))
             + list(range(48, 257, 16))
             + list(range(288, 513, 32))
             + list(range(576, 1024 + 1, 64))

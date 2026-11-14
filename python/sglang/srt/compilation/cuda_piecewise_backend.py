@@ -18,6 +18,9 @@ from sglang.srt.compilation.compile_phase import (
     is_in_torch_compile_warmup,
 )
 from sglang.srt.compilation.weak_ref_tensor import weak_ref_tensors
+from sglang.srt.model_executor.runner_backend_utils.tc_piecewise_cuda_graph import (
+    get_tc_piecewise_forward_context,
+)
 from sglang.srt.utils.common import print_warning_once
 
 logger = logging.getLogger(__name__)
@@ -113,10 +116,13 @@ class CUDAPiecewiseBackend:
             self.check_for_ending_compilation()
             return self.compiled_graph_for_general_shape(*args)
 
-        if len(self.sym_shape_indices) == 0:
-            return self.compiled_graph_for_general_shape(*args)
-
-        runtime_shape = args[self.sym_shape_indices[0]]
+        if self.sym_shape_indices:
+            runtime_shape = args[self.sym_shape_indices[0]]
+        else:
+            # Singleton traces have no SymInt argument. The runner still supplies the padded token
+            # count, which also keeps static pieces' buffers separate between capture buckets.
+            context = get_tc_piecewise_forward_context()
+            runtime_shape = context.num_tokens if context is not None else None
         if runtime_shape not in self.concrete_size_entries:
             # we don't need to do anything for this shape
             return self.compiled_graph_for_general_shape(*args)
