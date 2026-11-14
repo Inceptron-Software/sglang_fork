@@ -485,6 +485,15 @@ class SGLangBackend:
             self,
         ).run(*example_inputs)
 
+        from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
+            eager_on_graph,
+        )
+
+        # Keep opaque partitions live when a compiled forward is captured by breakable graphs.
+        for item in self.piecewise_graphs:
+            if item.is_splitting_graph:
+                item.graph.forward = eager_on_graph(True)(item.graph.forward)
+
         rank = torch.distributed.get_rank()
 
         if rank == 0:

@@ -222,6 +222,8 @@ def eager_on_graph(enable: bool, capture_stub: Optional[Callable] = None):
             return inner
 
         def wrapper(*args, **kwargs):
+            if torch.compiler.is_compiling():
+                return inner(*args, **kwargs)
             capture = _current_capture_var.get()
             if capture is None:
                 return inner(*args, **kwargs)

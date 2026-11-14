@@ -119,6 +119,10 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
             if post_warmup_hook is not None:
                 post_warmup_hook()
 
+        # Reclaim ordinary warmup scratch now; graph capture cannot release that cached memory.
+        self._device_module.synchronize()
+        self._device_module.empty_cache()
+
         graph = BreakableCUDAGraph(self.deduped_cuda_graph)
         captured_fn = (
             eager_on_graph(True)(forward_fn) if self._debug_eager else forward_fn
